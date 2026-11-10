@@ -1,0 +1,20 @@
+{
+  "name": "voicelog-gnani",
+  "version": "1.0.0",
+  "description": "VoiceLog expense tracker powered by Gnani AI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "flask",
+    "speech-to-text",
+    "expense-tracker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}

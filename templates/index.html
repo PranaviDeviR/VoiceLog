@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceLog - Smart Expense Tracker</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --muted: #64748b;
+            --border: #e2e8f0;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 28px 18px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        header { text-align: center; margin-bottom: 28px; }
+        header h1 { color: var(--primary); margin-bottom: 5px; }
+        header p { color: var(--muted); margin-top: 0; }
+
+        .card {
+            background: var(--card-bg);
+            padding: 22px;
+            border-radius: 14px;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+            margin-bottom: 20px;
+        }
+
+        .record-area { text-align: center; }
+        .hint { color: var(--muted); font-size: 14px; }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: 0;
+            padding: 12px 22px;
+            font-size: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 5px;
+        }
+
+        button:hover { background: #4338ca; }
+        button:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+        #status {
+            margin-top: 16px;
+            min-height: 22px;
+            font-weight: 600;
+            color: var(--primary);
+            overflow-wrap: anywhere;
+        }
+
+        .table-wrap { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            overflow-wrap: anywhere;
+        }
+
+        th { background: #f1f5f9; }
+        .error { color: #b91c1c !important; }
+        .success { color: #15803d !important; }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>VoiceLog 🎙️</h1>
+            <p>Smart Expense Tracker powered by Gnani AI</p>
+        </header>
+
+        <section class="card record-area">
+            <h3>Record Voice Expense</h3>
+            <p class="hint">Try saying: "I spent 350 rupees for lunch."</p>
+
+            <button id="recordBtn" type="button">🔴 Start Recording</button>
+            <button id="stopBtn" type="button" disabled>⏹️ Stop &amp; Process</button>
+
+            <p id="status" role="status" aria-live="polite">Ready.</p>
+        </section>
+
+        <section class="card">
+            <h3>Expense History</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Amount</th>
+                            <th>Transcript</th>
+                        </tr>
+                    </thead>
+                    <tbody id="expense-table-body">
+                        <tr>
+                            <td colspan="3">Loading expenses...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let mediaRecorder = null;
+        let audioStream = null;
+        let audioChunks = [];
+
+        const recordBtn = document.getElementById("recordBtn");
+        const stopBtn = document.getElementById("stopBtn");
+        const statusText = document.getElementById("status");
+        const expenseBody = document.getElementById("expense-table-body");
+
+        function setStatus(message, type = "") {
+            statusText.textContent = message;
+            statusText.className = type;
+        }
+
+        async function fetchExpenses() {
+            try {
+                const response = await fetch("/get-expenses");
+
+                if (!response.ok) {
+                    throw new Error("Could not load expense history.");
+                }
+
+                const expenses = await response.json();
+                expenseBody.replaceChildren();
+
+                if (!expenses.length) {
+                    const row = expenseBody.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 3;
+                    cell.textContent = "No expenses logged yet.";
+                    return;
+                }
+
+                [...expenses].reverse().forEach((item) => {
+                    const row = expenseBody.insertRow();
+                    row.insertCell().textContent = item.category ?? "General";
+                    row.insertCell().textContent = "₹" + (item.amount ?? "0");
+                    row.insertCell().textContent =
+                        item.item ?? item.transcript ?? "";
+                });
+            } catch (error) {
+                console.error("Expense loading error:", error);
+                expenseBody.innerHTML =
+                    '<tr><td colspan="3">Could not load expenses.</td></tr>';
+            }
+        }
+
+        function chooseRecordingMimeType() {
+            const candidates = [
+                "audio/ogg;codecs=opus",
+                "audio/webm;codecs=opus",
+                "audio/webm",
+                "audio/mp4"
+            ];
+
+            for (const type of candidates) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    return type;
+                }
+            }
+
+            return "";
+        }
+
+        function getAudioFileDetails(blob, mimeType) {
+            const baseType = (mimeType || blob.type || "").split(";")[0];
+
+            const extensions = {
+                "audio/ogg": "ogg",
+                "audio/webm": "webm",
+                "audio/mp4": "m4a",
+                "audio/wav": "wav"
+            };
+
+            return {
+                type: baseType || "application/octet-stream",
+                filename: "voice_note." + (extensions[baseType] || "audio")
+            };
+        }
+
+        async function uploadRecording(blob, mimeType) {
+            if (!blob || blob.size === 0) {
+                setStatus("No audio was recorded. Please try again.", "error");
+                return;
+            }
+
+            setStatus("Sending audio to Gnani AI...");
+
+            const details = getAudioFileDetails(blob, mimeType);
+            const audioToSend = new Blob([blob], { type: details.type });
+
+            const formData = new FormData();
+            formData.append("audio", audioToSend, details.filename);
+
+            try {
+                const response = await fetch("/process-audio", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    throw new Error(
+                        result.error ||
+                        result.details ||
+                        "Audio processing failed."
+                    );
+                }
+
+                const count = result.expenses?.length ?? 1;
+
+                setStatus(
+                    `Success! ${count} expenses logged successfully.`,
+                    "success"
+                );
+
+                await fetchExpenses();
+
+            } catch (error) {
+                console.error("Audio upload/processing error:", error);
+                setStatus("Processing failed: " + error.message, "error");
+            }
+        }
+
+        async function startRecording() {
+            audioChunks = [];
+
+            if (!window.isSecureContext) {
+                setStatus(
+                    "This page is not in a secure context. Open it through the local Flask address.",
+                    "error"
+                );
+                return;
+            }
+
+            if (!navigator.mediaDevices ||
+                !navigator.mediaDevices.getUserMedia) {
+                setStatus(
+                    "Microphone API is unavailable in this page.",
+                    "error"
+                );
+                return;
+            }
+
+            try {
+                setStatus("Requesting microphone access...");
+
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                const mimeType = chooseRecordingMimeType();
+
+                mediaRecorder = mimeType
+                    ? new MediaRecorder(audioStream, { mimeType })
+                    : new MediaRecorder(audioStream);
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onerror = (event) => {
+                    console.error("MediaRecorder error:", event.error);
+                    setStatus(
+                        "Recorder error: " +
+                        (event.error?.message || "Unknown recording error."),
+                        "error"
+                    );
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const actualMimeType =
+                        mediaRecorder.mimeType || mimeType || "application/octet-stream";
+
+                    const audioBlob = new Blob(audioChunks, {
+                        type: actualMimeType
+                    });
+
+                    if (audioStream) {
+                        audioStream.getTracks().forEach(track => track.stop());
+                        audioStream = null;
+                    }
+
+                    await uploadRecording(audioBlob, actualMimeType);
+                };
+
+                mediaRecorder.start();
+
+                recordBtn.disabled = true;
+                stopBtn.disabled = false;
+                setStatus("Recording... Speak now!");
+
+            } catch (error) {
+                console.error(
+                    "Microphone/recording error:",
+                    error.name,
+                    error.message
+                );
+
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                    audioStream = null;
+                }
+
+                setStatus(
+                    `${error.name}: ${error.message}`,
+                    "error"
+                );
+
+                recordBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function stopRecording() {
+            if (!mediaRecorder || mediaRecorder.state === "inactive") {
+                setStatus("There is no active recording.", "error");
+                return;
+            }
+
+            stopBtn.disabled = true;
+            recordBtn.disabled = false;
+            setStatus("Finishing recording...");
+
+            mediaRecorder.stop();
+        }
+
+        recordBtn.addEventListener("click", startRecording);
+        stopBtn.addEventListener("click", stopRecording);
+
+        fetchExpenses();
+    </script>
+</body>
+</html>

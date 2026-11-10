@@ -1,0 +1,9 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+expenses.json
+temp_recording.*
+*.ogg
+*.webm
+*.m4a

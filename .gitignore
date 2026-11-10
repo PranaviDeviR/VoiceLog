@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 node_modules/
 __pycache__/
 *.pyc
@@ -230,6 +231,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+=======
+>>>>>>> 4028c92c7f541c2cdc31e690fc388e7cf35b74ac
 .env
 node_modules/
 __pycache__/
